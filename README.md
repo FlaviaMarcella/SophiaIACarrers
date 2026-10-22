@@ -19,7 +19,7 @@ com tema claro/escuro e histórico de conversas.
 
 ### Vídeo da aplicação em execução
 
-https://github.com/user-attachments/assets/COLE_AQUI_O_LINK_DO_VIDEO
+https://github.com/user-attachments/assets/023d6ab5-17c5-4354-8348-0b0dcbd7f8dc
 
 <!--
   Como adicionar as mídias:
