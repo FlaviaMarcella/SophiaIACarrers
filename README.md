@@ -160,6 +160,11 @@ análise, regras de pontuação e o estilo das respostas.
 
 ---
 
+## 🎓 Sobre o projeto
+
+Este projeto foi criado como parte do **Minicurso de AWS Kiro**, realizado no
+**II Workshop da Computação da UNIFAL-MG** (Universidade Federal de Alfenas).
+
 ## 📄 Licença
 
 Defina a licença do projeto conforme a sua preferência (por exemplo, MIT) antes
