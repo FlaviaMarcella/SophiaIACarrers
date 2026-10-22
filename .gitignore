@@ -1,0 +1,33 @@
+# ---------------------------------------------------------------------------
+# .gitignore do projeto Sophia
+# Mantem fora do repositorio: segredos, ambiente virtual, caches e lixo de SO.
+# ---------------------------------------------------------------------------
+
+# Variaveis de ambiente / credenciais (NUNCA versionar chaves da AWS)
+.env
+.env.*
+!.env.example
+
+# Ambiente virtual do Python
+venv/
+.venv/
+env/
+
+# Cache e artefatos do Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+
+# Logs
+*.log
+
+# Arquivos de sistema operacional
+.DS_Store
+Thumbs.db
+
+# Arquivos de editores/IDEs
+.vscode/
+.idea/
+*.swp

@@ -1,0 +1,2112 @@
+<!DOCTYPE html>
+<!--
+  templates/index.html
+  ---------------------------------------------------------------------------
+  Pagina de chat da Sophia (Mentora de Carreira / Analisadora de Perfis do
+  LinkedIn).
+
+  Recursos da interface:
+    - Onboarding acolhedor com cards de sugestoes rapidas (glassmorphism).
+    - Baloes de conversa arredondados, com mini avatar da Sophia.
+    - Historico de CONVERSAS na barra lateral, guardado no navegador
+      (localStorage): criar nova, trocar, renomear ao vivo pelo 1o envio e
+      excluir. Ao trocar de conversa, o contexto e reenviado ao servidor via
+      POST /sincronizar.
+    - Configuracoes (modal) com tema claro/escuro persistido no navegador.
+    - Campo de entrada flutuante com blur, anexo de PDF e envio.
+
+  Contrato com o backend Flask preservado:
+    - POST /chat      -> envia mensagem (JSON ou multipart com PDF).
+    - POST /limpar    -> descarta a memoria do servidor.
+    - POST /sincronizar -> substitui a memoria do servidor pela conversa ativa.
+  ---------------------------------------------------------------------------
+-->
+<html lang="pt-BR" data-tema="claro">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sophia - Sua mentora de carreira</title>
+
+    <!-- Fontes da identidade visual: Poppins (titulos) e Inter (corpo). -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@500;600;700&display=swap"
+      rel="stylesheet"
+    />
+
+    <style>
+      /* -------------------------------------------------------------------
+         TEMA CLARO (padrao). As variaveis de cor ficam em :root e sao
+         sobrescritas no tema escuro por [data-tema="escuro"].
+         ------------------------------------------------------------------- */
+      :root {
+        /* Cores fixas da marca (nao mudam entre temas). */
+        --azul-profundo: #004182;
+        --azul-royal-escuro: #0a192f;
+        --ciano: #00b4d8;
+        --verde-agua: #00f5d4;
+        --verde-esmeralda: #10b981;
+        --laranja: #f59e0b;
+
+        /* Superficies e textos (variam por tema). */
+        --fundo-app: #eef2f7;
+        --fundo-chat: #f4f6f9;
+        --superficie: #ffffff;
+        --superficie-2: #ffffff;
+        --texto: #334155;
+        --texto-suave: #64748b;
+        --borda: #e2e8f0;
+
+        /* Chip/vidro do onboarding e input. */
+        --vidro: rgba(255, 255, 255, 0.65);
+        --vidro-rodape: rgba(255, 255, 255, 0.75);
+        --grade: rgba(0, 65, 130, 0.035);
+
+        --raio: 18px;
+        --raio-balao: 16px;
+        --sombra-app: 0 20px 60px rgba(10, 25, 47, 0.18);
+        --sombra-suave: 0 2px 10px rgba(10, 25, 47, 0.08);
+      }
+
+      /* -------------------------------------------------------------------
+         TEMA ESCURO. Mantem o gradiente da marca no cabecalho, mas escurece
+         as superficies e clareia os textos, preservando contraste.
+         ------------------------------------------------------------------- */
+      [data-tema="escuro"] {
+        --fundo-app: #060b16;
+        --fundo-chat: #0b1220;
+        --superficie: #111a2b;
+        --superficie-2: #16213a;
+        --texto: #e2e8f0;
+        --texto-suave: #94a3b8;
+        --borda: #243149;
+
+        --vidro: rgba(22, 33, 58, 0.6);
+        --vidro-rodape: rgba(17, 26, 43, 0.78);
+        --grade: rgba(148, 197, 255, 0.05);
+
+        --sombra-app: 0 20px 60px rgba(0, 0, 0, 0.55);
+        --sombra-suave: 0 2px 10px rgba(0, 0, 0, 0.35);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        height: 100%;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Inter", Arial, Helvetica, sans-serif;
+        color: var(--texto);
+        background:
+          radial-gradient(1200px 600px at 100% 0%, rgba(0, 180, 216, 0.12), transparent 60%),
+          radial-gradient(900px 500px at 0% 100%, rgba(0, 65, 130, 0.1), transparent 55%),
+          var(--fundo-app);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 100vh;
+        padding: 24px;
+        transition: background-color 0.25s ease, color 0.25s ease;
+      }
+
+      /* Layout geral: sidebar + chat. */
+      .app {
+        display: flex;
+        width: 100%;
+        max-width: 1120px;
+        height: calc(100vh - 48px);
+        max-height: 900px;
+        background: var(--superficie);
+        border-radius: 24px;
+        box-shadow: var(--sombra-app);
+        overflow: hidden;
+      }
+
+      /* ------------------------------ Sidebar ------------------------------ */
+      .sidebar {
+        width: 272px;
+        flex-shrink: 0;
+        background: linear-gradient(180deg, #0a192f 0%, #04284f 100%);
+        color: #e2e8f0;
+        display: flex;
+        flex-direction: column;
+        padding: 20px 14px;
+        gap: 16px;
+        transition: width 0.25s ease, padding 0.25s ease;
+      }
+
+      .sidebar.recolhida {
+        width: 72px;
+        padding: 20px 12px;
+      }
+
+      .sidebar.recolhida .sidebar-texto,
+      .sidebar.recolhida .sidebar-secao h3,
+      .sidebar.recolhida .lista-conversas,
+      .sidebar.recolhida .sidebar-rodape {
+        display: none;
+      }
+
+      .sidebar.recolhida .sidebar-nova {
+        justify-content: center;
+      }
+
+      .sidebar-topo {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      .sidebar-marca {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-family: "Poppins", sans-serif;
+        font-weight: 600;
+        font-size: 1rem;
+        color: #fff;
+      }
+
+      .sidebar-marca .ponto {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--verde-agua);
+        box-shadow: 0 0 10px var(--verde-agua);
+        flex-shrink: 0;
+      }
+
+      .btn-recolher {
+        background: rgba(255, 255, 255, 0.08);
+        color: #cbd5e1;
+        border: none;
+        width: 34px;
+        height: 34px;
+        border-radius: 10px;
+        cursor: pointer;
+        font-size: 1rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        transition: background 0.15s;
+      }
+
+      .btn-recolher:hover {
+        background: rgba(255, 255, 255, 0.16);
+      }
+
+      .sidebar-nova {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 11px 14px;
+        border-radius: 12px;
+        background: linear-gradient(135deg, var(--ciano), var(--verde-agua));
+        color: #04284f;
+        font-family: "Poppins", sans-serif;
+        font-weight: 600;
+        font-size: 0.9rem;
+        border: none;
+        cursor: pointer;
+        white-space: nowrap;
+        transition: filter 0.15s, transform 0.1s;
+      }
+
+      .sidebar-nova:hover {
+        filter: brightness(1.05);
+      }
+      .sidebar-nova:active {
+        transform: translateY(1px);
+      }
+
+      .sidebar-secao {
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+      }
+
+      .sidebar-secao.cresce {
+        flex: 1;
+        overflow: hidden;
+      }
+
+      .sidebar-secao h3 {
+        margin: 2px 6px 8px;
+        font-size: 0.72rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #7e93b3;
+        font-weight: 600;
+      }
+
+      /* Lista de conversas guardadas (historico). */
+      .lista-conversas {
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        padding-right: 2px;
+      }
+
+      .conversa-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 9px 10px;
+        border-radius: 10px;
+        font-size: 0.86rem;
+        color: #cbd5e1;
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+
+      .conversa-item:hover {
+        background: rgba(255, 255, 255, 0.07);
+      }
+
+      .conversa-item.ativa {
+        background: rgba(0, 180, 216, 0.18);
+        color: #fff;
+      }
+
+      .conversa-item .titulo {
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .conversa-item .excluir {
+        opacity: 0;
+        background: transparent;
+        border: none;
+        color: #94a3b8;
+        cursor: pointer;
+        font-size: 0.95rem;
+        padding: 2px 4px;
+        border-radius: 6px;
+        flex-shrink: 0;
+      }
+
+      .conversa-item:hover .excluir {
+        opacity: 1;
+      }
+
+      .conversa-item .excluir:hover {
+        color: #f87171;
+        background: rgba(248, 113, 113, 0.12);
+      }
+
+      .lista-vazia {
+        padding: 8px 10px;
+        font-size: 0.8rem;
+        color: #64789b;
+      }
+
+      .sidebar-rodape {
+        margin-top: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .sidebar-config {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 12px;
+        border-radius: 10px;
+        font-size: 0.85rem;
+        color: #cbd5e1;
+        background: rgba(255, 255, 255, 0.05);
+        border: none;
+        cursor: pointer;
+        width: 100%;
+        text-align: left;
+        transition: background 0.15s;
+      }
+
+      .sidebar-config:hover {
+        background: rgba(255, 255, 255, 0.1);
+      }
+
+      .sidebar-aviso {
+        font-size: 0.72rem;
+        color: #64789b;
+        line-height: 1.5;
+        padding: 0 6px;
+      }
+
+      /* ------------------------------- Chat ------------------------------- */
+      .chat {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+        background: var(--fundo-chat);
+        transition: background-color 0.25s ease;
+      }
+
+      .cabecalho {
+        position: relative;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 16px 22px;
+        color: #ffffff;
+        background:
+          radial-gradient(120px 120px at 92% -10%, rgba(0, 245, 212, 0.45), transparent 70%),
+          radial-gradient(160px 160px at 80% 120%, rgba(124, 58, 237, 0.25), transparent 70%),
+          linear-gradient(120deg, var(--azul-royal-escuro) 0%, var(--azul-profundo) 45%, var(--ciano) 100%);
+        overflow: hidden;
+      }
+
+      .avatar-wrap {
+        position: relative;
+        flex-shrink: 0;
+        width: 52px;
+        height: 52px;
+      }
+
+      .cabecalho .logo {
+        width: 52px;
+        height: 52px;
+        border-radius: 50%;
+        object-fit: cover;
+        object-position: center 38%;
+        background-color: #ffffff22;
+        border: 2px solid var(--verde-agua);
+        box-shadow: 0 0 12px rgba(0, 245, 212, 0.55);
+      }
+
+      .status-online {
+        position: absolute;
+        right: 1px;
+        bottom: 1px;
+        width: 13px;
+        height: 13px;
+        border-radius: 50%;
+        background: #22c55e;
+        border: 2px solid var(--azul-royal-escuro);
+        box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7);
+        animation: pulsar 1.8s infinite;
+      }
+
+      @keyframes pulsar {
+        0% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.6); }
+        70% { box-shadow: 0 0 0 7px rgba(34, 197, 94, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
+      }
+
+      .cabecalho .titulos {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .cabecalho .nome-linha {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .cabecalho .titulos h1 {
+        margin: 0;
+        font-family: "Poppins", sans-serif;
+        font-weight: 700;
+        font-size: 1.35rem;
+        letter-spacing: 0.2px;
+      }
+
+      .badge-ia {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        padding: 3px 9px;
+        font-size: 0.68rem;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        border-radius: 999px;
+        background: rgba(0, 245, 212, 0.18);
+        border: 1px solid rgba(0, 245, 212, 0.5);
+        color: #d7fff8;
+      }
+
+      .cabecalho .titulos p {
+        margin: 3px 0 0;
+        font-size: 0.85rem;
+        color: #bfe9f5;
+        font-weight: 400;
+      }
+
+      .cabecalho-acoes {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .icone-btn {
+        width: 38px;
+        height: 38px;
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.22);
+        background: rgba(255, 255, 255, 0.1);
+        color: #ffffff;
+        font-size: 1rem;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background 0.15s, transform 0.1s;
+      }
+
+      .icone-btn:hover {
+        background: rgba(255, 255, 255, 0.22);
+      }
+      .icone-btn:active {
+        transform: translateY(1px);
+      }
+
+      /* ---------------------------- Mensagens ----------------------------- */
+      #mensagens {
+        flex: 1;
+        overflow-y: auto;
+        padding: 24px clamp(16px, 5vw, 48px);
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        background-color: var(--fundo-chat);
+        background-image:
+          linear-gradient(var(--grade) 1px, transparent 1px),
+          linear-gradient(90deg, var(--grade) 1px, transparent 1px);
+        background-size: 26px 26px;
+      }
+
+      /* Onboarding / boas-vindas. */
+      .onboarding {
+        margin: auto;
+        max-width: 640px;
+        text-align: center;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 14px;
+        padding: 20px 0;
+        animation: surgir 0.4s ease both;
+      }
+
+      @keyframes surgir {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+
+      .onboarding .avatar-grande {
+        width: 96px;
+        height: 96px;
+        border-radius: 50%;
+        object-fit: cover;
+        object-position: center 38%;
+        border: 3px solid var(--verde-agua);
+        box-shadow: 0 10px 30px rgba(0, 180, 216, 0.3);
+        background: #fff;
+      }
+
+      .onboarding h2 {
+        margin: 6px 0 0;
+        font-family: "Poppins", sans-serif;
+        font-weight: 700;
+        font-size: 1.6rem;
+        color: var(--texto);
+      }
+
+      .onboarding p {
+        margin: 0;
+        font-size: 1rem;
+        line-height: 1.6;
+        color: var(--texto-suave);
+        max-width: 520px;
+      }
+
+      .sugestoes {
+        margin-top: 10px;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+        width: 100%;
+      }
+
+      .chip {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        text-align: left;
+        padding: 14px 16px;
+        border-radius: 16px;
+        cursor: pointer;
+        font-family: inherit;
+        font-size: 0.92rem;
+        font-weight: 500;
+        color: var(--texto);
+        background: var(--vidro);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        border: 1px solid rgba(0, 180, 216, 0.35);
+        box-shadow: var(--sombra-suave);
+        transition: transform 0.12s ease, box-shadow 0.15s ease, border-color 0.15s;
+      }
+
+      .chip:hover {
+        transform: translateY(-2px);
+        border-color: var(--ciano);
+        box-shadow: 0 8px 22px rgba(0, 180, 216, 0.22);
+      }
+
+      .chip .emoji {
+        font-size: 1.3rem;
+        line-height: 1;
+        flex-shrink: 0;
+      }
+
+      /* Baloes. */
+      .mensagem {
+        max-width: 78%;
+        padding: 13px 16px;
+        border-radius: var(--raio-balao);
+        line-height: 1.55;
+        font-size: 0.95rem;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        animation: surgir 0.25s ease both;
+      }
+
+      .linha-sophia {
+        display: flex;
+        align-items: flex-end;
+        gap: 10px;
+        align-self: flex-start;
+        max-width: 85%;
+        animation: surgir 0.25s ease both;
+      }
+
+      .mini-avatar {
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        object-fit: cover;
+        object-position: center 38%;
+        border: 1.5px solid var(--verde-agua);
+        flex-shrink: 0;
+        background: #fff;
+      }
+
+      .mensagem.sophia {
+        background-color: var(--superficie);
+        color: var(--texto);
+        border: 1px solid var(--borda);
+        border-bottom-left-radius: 4px;
+        box-shadow: var(--sombra-suave);
+        max-width: 100%;
+        /* O conteudo da Sophia agora e HTML (Markdown convertido), com blocos
+           reais; usamos quebra normal para nao duplicar espacos/linhas. */
+        white-space: normal;
+      }
+
+      .mensagem.sophia a {
+        color: var(--ciano);
+        font-weight: 600;
+      }
+
+      /* -------------------------------------------------------------------
+         Formatacao do Markdown convertido dentro das bolhas da Sophia.
+         Espacamentos enxutos para caber bem no balao do chat.
+         ------------------------------------------------------------------- */
+      .mensagem.sophia > :first-child { margin-top: 0; }
+      .mensagem.sophia > :last-child { margin-bottom: 0; }
+
+      .mensagem.sophia p {
+        margin: 0 0 10px;
+      }
+
+      .mensagem.sophia h3 {
+        font-family: "Poppins", sans-serif;
+        font-size: 1.02rem;
+        font-weight: 600;
+        margin: 14px 0 8px;
+        color: var(--azul-profundo);
+      }
+
+      .mensagem.sophia h4 {
+        font-family: "Poppins", sans-serif;
+        font-size: 0.92rem;
+        font-weight: 600;
+        margin: 12px 0 6px;
+        color: var(--texto);
+      }
+
+      [data-tema="escuro"] .mensagem.sophia h3 {
+        color: var(--ciano);
+      }
+
+      .mensagem.sophia ul,
+      .mensagem.sophia ol {
+        margin: 0 0 10px;
+        padding-left: 22px;
+      }
+
+      .mensagem.sophia li {
+        margin: 3px 0;
+      }
+
+      .mensagem.sophia li::marker {
+        color: var(--ciano);
+      }
+
+      .mensagem.sophia strong {
+        font-weight: 600;
+        color: var(--texto);
+      }
+
+      .mensagem.sophia code {
+        font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+        font-size: 0.86em;
+        padding: 1px 6px;
+        border-radius: 6px;
+        background: var(--superficie-2);
+        border: 1px solid var(--borda);
+      }
+
+      .mensagem.usuario {
+        align-self: flex-end;
+        background: linear-gradient(135deg, var(--azul-profundo), #0066cc);
+        color: #ffffff;
+        border-bottom-right-radius: 4px;
+        box-shadow: 0 2px 10px rgba(0, 65, 130, 0.25);
+      }
+
+      .mensagem.aviso {
+        align-self: center;
+        max-width: 90%;
+        background-color: #fff7ed;
+        color: #92400e;
+        border: 1px solid var(--laranja);
+        font-size: 0.85rem;
+        text-align: center;
+        box-shadow: none;
+      }
+
+      [data-tema="escuro"] .mensagem.aviso {
+        background-color: #3a2a12;
+        color: #fcd9a6;
+      }
+
+      /* Indicador "Sophia esta digitando". */
+      .digitando {
+        align-self: flex-start;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 12px 16px;
+        border-radius: var(--raio-balao);
+        border-bottom-left-radius: 4px;
+        background-color: var(--superficie);
+        border: 1px solid var(--borda);
+        color: var(--texto-suave);
+        font-size: 0.9rem;
+        box-shadow: var(--sombra-suave);
+      }
+
+      .digitando .pontos {
+        display: inline-flex;
+        gap: 4px;
+      }
+
+      .digitando .pontos span {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background-color: var(--verde-esmeralda);
+        display: inline-block;
+        animation: flutuar 1s infinite ease-in-out;
+      }
+
+      .digitando .pontos span:nth-child(2) { animation-delay: 0.15s; }
+      .digitando .pontos span:nth-child(3) { animation-delay: 0.3s; }
+
+      @keyframes flutuar {
+        0%, 60%, 100% { transform: translateY(0); opacity: 0.6; }
+        30% { transform: translateY(-5px); opacity: 1; }
+      }
+
+      /* Area de entrada. */
+      .area-entrada {
+        padding: 14px clamp(16px, 5vw, 48px) 10px;
+      }
+
+      #faixa-pdf {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 9px 14px;
+        margin-bottom: 10px;
+        background-color: var(--superficie-2);
+        border: 1px solid rgba(0, 180, 216, 0.4);
+        border-radius: 12px;
+        font-size: 0.85rem;
+        color: var(--texto);
+      }
+
+      #faixa-pdf #nome-pdf {
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      #botao-remover-pdf {
+        padding: 5px 12px;
+        font-size: 0.8rem;
+        background-color: var(--superficie);
+        color: var(--ciano);
+        border: 1px solid var(--ciano);
+        border-radius: 10px;
+      }
+
+      .rodape {
+        display: flex;
+        align-items: flex-end;
+        gap: 8px;
+        padding: 10px 10px 10px 16px;
+        border-radius: 22px;
+        background: var(--vidro-rodape);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border: 1px solid var(--borda);
+        box-shadow: 0 10px 30px rgba(10, 25, 47, 0.1);
+      }
+
+      #entrada {
+        flex: 1;
+        resize: none;
+        max-height: 140px;
+        padding: 11px 6px;
+        font-family: inherit;
+        font-size: 0.95rem;
+        color: var(--texto);
+        border: none;
+        background: transparent;
+        outline: none;
+        line-height: 1.5;
+      }
+
+      #entrada::placeholder {
+        color: var(--texto-suave);
+      }
+
+      button {
+        font-family: "Poppins", sans-serif;
+        cursor: pointer;
+        border: none;
+        transition: filter 0.15s, background-color 0.15s, transform 0.1s;
+      }
+
+      button:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+      }
+
+      #botao-anexar {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 10px 14px;
+        font-size: 0.85rem;
+        font-weight: 500;
+        border-radius: 14px;
+        background-color: var(--superficie-2);
+        color: var(--ciano);
+        white-space: nowrap;
+        align-self: center;
+        border: 1px solid var(--borda);
+      }
+
+      #botao-anexar:hover:not(:disabled) {
+        filter: brightness(0.98);
+      }
+
+      #botao-limpar {
+        width: 42px;
+        height: 42px;
+        border-radius: 14px;
+        background-color: transparent;
+        color: var(--texto-suave);
+        font-size: 1.1rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        align-self: center;
+      }
+
+      #botao-limpar:hover:not(:disabled) {
+        background-color: var(--superficie-2);
+        color: #ef4444;
+      }
+
+      #botao-enviar {
+        width: 46px;
+        height: 46px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, var(--azul-profundo), var(--ciano));
+        color: #ffffff;
+        font-size: 1.1rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        box-shadow: 0 6px 16px rgba(0, 180, 216, 0.4);
+        align-self: center;
+      }
+
+      #botao-enviar:hover:not(:disabled) {
+        filter: brightness(1.08);
+        transform: translateY(-1px);
+      }
+      #botao-enviar:active:not(:disabled) {
+        transform: translateY(0);
+      }
+
+      .nota-rodape {
+        margin: 8px 0 2px;
+        text-align: center;
+        font-size: 0.74rem;
+        color: var(--texto-suave);
+      }
+
+      /* ----------------------- Modal de Configuracoes --------------------- */
+      .modal-fundo {
+        position: fixed;
+        inset: 0;
+        background: rgba(5, 11, 22, 0.55);
+        backdrop-filter: blur(3px);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+        z-index: 50;
+      }
+
+      .modal-fundo.aberto {
+        display: flex;
+        animation: surgir 0.2s ease both;
+      }
+
+      .modal {
+        width: 100%;
+        max-width: 440px;
+        background: var(--superficie);
+        color: var(--texto);
+        border-radius: 20px;
+        box-shadow: var(--sombra-app);
+        overflow: hidden;
+      }
+
+      .modal-topo {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 18px 20px;
+        border-bottom: 1px solid var(--borda);
+      }
+
+      .modal-topo h2 {
+        margin: 0;
+        font-family: "Poppins", sans-serif;
+        font-size: 1.15rem;
+        color: var(--texto);
+      }
+
+      .modal-fechar {
+        background: transparent;
+        border: none;
+        color: var(--texto-suave);
+        font-size: 1.3rem;
+        cursor: pointer;
+        width: 32px;
+        height: 32px;
+        border-radius: 8px;
+      }
+
+      .modal-fechar:hover {
+        background: var(--superficie-2);
+      }
+
+      .modal-corpo {
+        padding: 18px 20px 22px;
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+      }
+
+      .config-linha {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+      }
+
+      .config-linha .rotulo {
+        font-size: 0.92rem;
+        font-weight: 500;
+      }
+
+      .config-linha .descricao {
+        margin: 2px 0 0;
+        font-size: 0.78rem;
+        color: var(--texto-suave);
+      }
+
+      /* Seletor de tema (segmented control). */
+      .seletor-tema {
+        display: inline-flex;
+        background: var(--superficie-2);
+        border: 1px solid var(--borda);
+        border-radius: 12px;
+        padding: 3px;
+        gap: 2px;
+      }
+
+      .seletor-tema button {
+        padding: 7px 14px;
+        border-radius: 9px;
+        background: transparent;
+        color: var(--texto-suave);
+        font-size: 0.82rem;
+        font-weight: 600;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .seletor-tema button.ativo {
+        background: linear-gradient(135deg, var(--azul-profundo), var(--ciano));
+        color: #fff;
+      }
+
+      /* Interruptor (toggle) generico para outras opcoes. */
+      .switch {
+        position: relative;
+        width: 46px;
+        height: 26px;
+        flex-shrink: 0;
+      }
+
+      .switch input {
+        opacity: 0;
+        width: 0;
+        height: 0;
+      }
+
+      .switch .trilho {
+        position: absolute;
+        inset: 0;
+        background: var(--borda);
+        border-radius: 999px;
+        transition: background 0.2s;
+      }
+
+      .switch .trilho::before {
+        content: "";
+        position: absolute;
+        width: 20px;
+        height: 20px;
+        left: 3px;
+        top: 3px;
+        background: #fff;
+        border-radius: 50%;
+        transition: transform 0.2s;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+      }
+
+      .switch input:checked + .trilho {
+        background: var(--verde-esmeralda);
+      }
+
+      .switch input:checked + .trilho::before {
+        transform: translateX(20px);
+      }
+
+      .config-perigo {
+        border-top: 1px solid var(--borda);
+        padding-top: 16px;
+      }
+
+      .btn-perigo {
+        padding: 9px 14px;
+        border-radius: 10px;
+        background: transparent;
+        color: #ef4444;
+        border: 1px solid #ef4444;
+        font-size: 0.85rem;
+        font-weight: 600;
+      }
+
+      .btn-perigo:hover {
+        background: rgba(239, 68, 68, 0.1);
+      }
+
+      /* Responsividade. */
+      @media (max-width: 860px) {
+        body { padding: 0; }
+        .app {
+          height: 100vh;
+          max-height: none;
+          border-radius: 0;
+        }
+        .sidebar { display: none; }
+        .sugestoes { grid-template-columns: 1fr; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <!-- ============================ SIDEBAR ============================ -->
+      <aside class="sidebar" id="sidebar">
+        <div class="sidebar-topo">
+          <div class="sidebar-marca">
+            <span class="ponto"></span>
+            <span class="sidebar-texto">Sophia</span>
+          </div>
+          <button
+            class="btn-recolher"
+            id="btn-recolher"
+            type="button"
+            title="Recolher menu"
+            aria-label="Recolher menu lateral"
+          >
+            ☰
+          </button>
+        </div>
+
+        <button class="sidebar-nova" id="sidebar-nova" type="button">
+          <span>＋</span>
+          <span class="sidebar-texto">Nova análise</span>
+        </button>
+
+        <div class="sidebar-secao cresce">
+          <h3>Histórico de conversas</h3>
+          <!-- A lista de conversas e preenchida pelo JavaScript (localStorage). -->
+          <div class="lista-conversas" id="lista-conversas"></div>
+        </div>
+
+        <div class="sidebar-rodape">
+          <button class="sidebar-config" id="abrir-config" type="button">
+            <span>⚙️</span>
+            <span class="sidebar-texto">Configurações</span>
+          </button>
+          <p class="sidebar-aviso sidebar-texto">
+            O histórico fica salvo apenas neste navegador. Use "Configurações"
+            para alternar o tema ou apagar tudo.
+          </p>
+        </div>
+      </aside>
+
+      <!-- ============================= CHAT ============================= -->
+      <main class="chat">
+        <header class="cabecalho">
+          <div class="avatar-wrap">
+            <img
+              class="logo"
+              src="{{ url_for('static', filename='sophia-logo.jpeg') }}"
+              alt="Avatar da Sophia, uma coruja tecnológica"
+            />
+            <span class="status-online" title="Online" aria-label="Status: online"></span>
+          </div>
+
+          <div class="titulos">
+            <div class="nome-linha">
+              <h1>Sophia</h1>
+              <span class="badge-ia">✨ IA · Mentora</span>
+            </div>
+            <p>Sua mentora de carreira</p>
+          </div>
+
+          <div class="cabecalho-acoes">
+            <!-- Alternancia rapida de tema direto no cabecalho. -->
+            <button class="icone-btn" id="botao-tema" type="button" title="Alternar tema claro/escuro" aria-label="Alternar tema">🌙</button>
+            <button class="icone-btn" type="button" title="Ajuda / FAQ" aria-label="Ajuda">?</button>
+            <button class="icone-btn" id="abrir-config-top" type="button" title="Configurações" aria-label="Configurações">⚙️</button>
+          </div>
+        </header>
+
+        <section id="mensagens" aria-live="polite" aria-label="Histórico da conversa">
+          <div class="onboarding" id="onboarding">
+            <img
+              class="avatar-grande"
+              src="{{ url_for('static', filename='sophia-logo.jpeg') }}"
+              alt="Avatar da Sophia"
+            />
+            <h2>Olá! Eu sou a Sophia. 🦉✨</h2>
+            <p>
+              Como posso te ajudar a conquistar sua próxima oportunidade hoje?
+              Posso analisar seu LinkedIn, sugerir melhorias no perfil ou treinar
+              para uma entrevista.
+            </p>
+
+            <div class="sugestoes" id="sugestoes">
+              <button class="chip" type="button" data-sugestao="Quero analisar meu perfil do LinkedIn. Pode me orientar o que enviar?">
+                <span class="emoji">🔍</span>
+                <span>Analisar meu perfil do LinkedIn</span>
+              </button>
+              <button class="chip" type="button" data-sugestao="Quero melhorar meu resumo profissional (seção Sobre). Como faço?">
+                <span class="emoji">📝</span>
+                <span>Melhorar meu resumo profissional</span>
+              </button>
+              <button class="chip" type="button" data-sugestao="Quero simular uma entrevista de emprego. Pode me ajudar a treinar?">
+                <span class="emoji">💬</span>
+                <span>Simular uma entrevista de emprego</span>
+              </button>
+              <button class="chip" type="button" data-sugestao="Quero descobrir palavras-chave relevantes para a minha área. Pode sugerir?">
+                <span class="emoji">🚀</span>
+                <span>Descobrir palavras-chave da minha área</span>
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <div class="area-entrada">
+          <div id="faixa-pdf" style="display: none;">
+            <span id="nome-pdf"></span>
+            <button id="botao-remover-pdf" type="button" title="Remover PDF">remover</button>
+          </div>
+
+          <div class="rodape">
+            <label for="entrada" style="position: absolute; left: -9999px;">
+              Digite sua mensagem para a Sophia
+            </label>
+            <textarea
+              id="entrada"
+              rows="1"
+              placeholder="Digite sua mensagem..."
+              aria-label="Digite sua mensagem para a Sophia"
+            ></textarea>
+
+            <input
+              id="entrada-pdf"
+              type="file"
+              accept="application/pdf,.pdf"
+              style="display: none;"
+              aria-label="Anexar PDF do currículo"
+            />
+            <button id="botao-anexar" type="button" title="Anexar PDF / currículo do LinkedIn">
+              📎 Anexar PDF
+            </button>
+            <button id="botao-limpar" type="button" title="Nova análise (limpar conversa)" aria-label="Nova análise">
+              🗑️
+            </button>
+            <button id="botao-enviar" type="button" title="Enviar" aria-label="Enviar mensagem">
+              ➤
+            </button>
+          </div>
+
+          <p class="nota-rodape">
+            Sophia é uma IA e pode cometer erros. Revise as informações importantes.
+          </p>
+        </div>
+      </main>
+    </div>
+
+    <!-- ===================== MODAL DE CONFIGURACOES ====================== -->
+    <div class="modal-fundo" id="modal-config" role="dialog" aria-modal="true" aria-label="Configurações">
+      <div class="modal">
+        <div class="modal-topo">
+          <h2>Configurações</h2>
+          <button class="modal-fechar" id="fechar-config" type="button" aria-label="Fechar">✕</button>
+        </div>
+        <div class="modal-corpo">
+          <!-- Tema claro/escuro. -->
+          <div class="config-linha">
+            <div>
+              <div class="rotulo">Tema</div>
+              <p class="descricao">Escolha entre o modo claro e o modo escuro.</p>
+            </div>
+            <div class="seletor-tema" id="seletor-tema">
+              <button type="button" data-tema="claro">☀️ Claro</button>
+              <button type="button" data-tema="escuro">🌙 Escuro</button>
+            </div>
+          </div>
+
+          <!-- Salvar historico no navegador. -->
+          <div class="config-linha">
+            <div>
+              <div class="rotulo">Salvar histórico neste navegador</div>
+              <p class="descricao">
+                Guarda suas conversas no localStorage para você retomá-las depois.
+              </p>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="toggle-historico" checked />
+              <span class="trilho"></span>
+            </label>
+          </div>
+
+          <!-- Enviar com Enter. -->
+          <div class="config-linha">
+            <div>
+              <div class="rotulo">Enviar com Enter</div>
+              <p class="descricao">Se desligado, use o botão enviar (Enter quebra linha).</p>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="toggle-enter" checked />
+              <span class="trilho"></span>
+            </label>
+          </div>
+
+          <!-- Zona de perigo: apagar todo o historico. -->
+          <div class="config-perigo">
+            <div class="config-linha">
+              <div>
+                <div class="rotulo">Apagar todo o histórico</div>
+                <p class="descricao">Remove todas as conversas salvas neste navegador.</p>
+              </div>
+              <button class="btn-perigo" id="apagar-tudo" type="button">Apagar tudo</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // =====================================================================
+      // JavaScript da pagina de chat da Sophia
+      // ---------------------------------------------------------------------
+      // Novidades desta versao:
+      //   1) HISTORICO DE CONVERSAS no navegador (localStorage): criar, trocar
+      //      e excluir conversas. Ao trocar, o contexto e reenviado ao servidor
+      //      via POST /sincronizar para a Sophia continuar a conversa certa.
+      //   2) CONFIGURACOES: tema claro/escuro (persistido), salvar historico,
+      //      enviar com Enter e apagar tudo.
+      //
+      // O contrato com o backend (POST /chat e /limpar) foi preservado.
+      // =====================================================================
+
+      // ------------------------- Chaves do localStorage -------------------
+      const LS_CONVERSAS = "sophia_conversas";   // lista de conversas salvas
+      const LS_ATIVA = "sophia_conversa_ativa";  // id da conversa selecionada
+      const LS_TEMA = "sophia_tema";             // "claro" | "escuro"
+      const LS_CFG = "sophia_config";            // { salvarHistorico, enviarComEnter }
+
+      // --------------------------- Referencias DOM ------------------------
+      const areaMensagens = document.getElementById("mensagens");
+      const campoEntrada = document.getElementById("entrada");
+      const botaoEnviar = document.getElementById("botao-enviar");
+      const botaoLimpar = document.getElementById("botao-limpar");
+      const campoPdf = document.getElementById("entrada-pdf");
+      const botaoAnexar = document.getElementById("botao-anexar");
+      const faixaPdf = document.getElementById("faixa-pdf");
+      const nomePdf = document.getElementById("nome-pdf");
+      const botaoRemoverPdf = document.getElementById("botao-remover-pdf");
+      const sugestoes = document.getElementById("sugestoes");
+      const sidebar = document.getElementById("sidebar");
+      const btnRecolher = document.getElementById("btn-recolher");
+      const sidebarNova = document.getElementById("sidebar-nova");
+      const listaConversas = document.getElementById("lista-conversas");
+
+      // Configuracoes (modal).
+      const modalConfig = document.getElementById("modal-config");
+      const abrirConfig = document.getElementById("abrir-config");
+      const abrirConfigTop = document.getElementById("abrir-config-top");
+      const fecharConfig = document.getElementById("fechar-config");
+      const seletorTema = document.getElementById("seletor-tema");
+      const botaoTema = document.getElementById("botao-tema");
+      const toggleHistorico = document.getElementById("toggle-historico");
+      const toggleEnter = document.getElementById("toggle-enter");
+      const apagarTudo = document.getElementById("apagar-tudo");
+
+      const avatarSophiaUrl = "{{ url_for('static', filename='sophia-logo.jpeg') }}";
+
+      // --------------------------- Estado da sessao -----------------------
+      // Conversas: array de { id, titulo, mensagens:[{classe, texto}], criadaEm }.
+      let conversas = [];
+      let idAtivo = null;
+      let aguardandoResposta = false;
+      let elementoDigitando = null;
+      // Configuracoes com valores padrao.
+      let config = { salvarHistorico: true, enviarComEnter: true };
+
+      // =====================================================================
+      // PERSISTENCIA (localStorage)
+      // =====================================================================
+      function lerJSON(chave, padrao) {
+        try {
+          const bruto = localStorage.getItem(chave);
+          return bruto ? JSON.parse(bruto) : padrao;
+        } catch (e) {
+          return padrao;
+        }
+      }
+
+      function salvarConversas() {
+        if (!config.salvarHistorico) {
+          return; // o Usuario optou por nao persistir
+        }
+        try {
+          localStorage.setItem(LS_CONVERSAS, JSON.stringify(conversas));
+          localStorage.setItem(LS_ATIVA, idAtivo || "");
+        } catch (e) {
+          // Sem acao: se o localStorage falhar, a sessao segue so em memoria.
+        }
+      }
+
+      function salvarConfig() {
+        try {
+          localStorage.setItem(LS_CFG, JSON.stringify(config));
+        } catch (e) {}
+      }
+
+      // =====================================================================
+      // TEMA (claro/escuro)
+      // =====================================================================
+      function aplicarTema(tema) {
+        const t = tema === "escuro" ? "escuro" : "claro";
+        document.documentElement.setAttribute("data-tema", t);
+        // Icone do botao do cabecalho: mostra para onde o clique vai levar.
+        botaoTema.textContent = t === "escuro" ? "☀️" : "🌙";
+        // Marca o botao ativo no seletor do modal.
+        seletorTema.querySelectorAll("button").forEach(function (b) {
+          b.classList.toggle("ativo", b.getAttribute("data-tema") === t);
+        });
+        try {
+          localStorage.setItem(LS_TEMA, t);
+        } catch (e) {}
+      }
+
+      function alternarTema() {
+        const atual = document.documentElement.getAttribute("data-tema");
+        aplicarTema(atual === "escuro" ? "claro" : "escuro");
+      }
+
+      // =====================================================================
+      // RENDER DA CONVERSA ATIVA
+      // =====================================================================
+      function conversaAtiva() {
+        return conversas.find(function (c) { return c.id === idAtivo; }) || null;
+      }
+
+      function esconderOnboarding() {
+        const ob = document.getElementById("onboarding");
+        if (ob && ob.parentNode) {
+          ob.remove();
+        }
+      }
+
+      /**
+       * Escapa caracteres especiais de HTML. Chamado SEMPRE antes de aplicar
+       * qualquer formatacao, para que o conteudo recebido nao injete HTML.
+       */
+      function escaparHtml(texto) {
+        return texto
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+      }
+
+      /**
+       * Converte o Markdown que a Sophia devolve em HTML seguro para exibicao.
+       *
+       * Estrategia de seguranca: primeiro ESCAPAMOS todo o texto (nenhuma tag
+       * do modelo e interpretada como HTML) e so depois aplicamos a formatacao
+       * sobre o texto ja escapado. Assim nao ha risco de injecao de HTML.
+       *
+       * Suportamos um subconjunto pratico de Markdown:
+       *   - Titulos  #, ##, ### -> <h3>/<h4>
+       *   - Negrito  **texto** e __texto__
+       *   - Italico  *texto* e _texto_
+       *   - Codigo   `codigo`
+       *   - Links    [rotulo](https://...)  (apenas http/https)
+       *   - Listas   - item / * item (nao ordenada) e 1. item (ordenada)
+       *   - Paragrafos separados por linha em branco e quebras simples.
+       */
+      function renderMarkdown(textoBruto) {
+        const texto = escaparHtml(String(textoBruto || "").replace(/\r\n/g, "\n"));
+        const linhas = texto.split("\n");
+
+        let html = "";
+        let tipoLista = null; // "ul" | "ol" | null
+        let bufferParagrafo = [];
+
+        // Formatacao "inline" aplicada DENTRO de cada linha ja escapada.
+        function inline(s) {
+          // Codigo em linha primeiro (protege o conteudo de outras regras).
+          s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
+          // Negrito.
+          s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+          s = s.replace(/__([^_]+)__/g, "<strong>$1</strong>");
+          // Italico (evita capturar ** ja tratado).
+          s = s.replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>");
+          s = s.replace(/(^|[^_])_([^_\n]+)_/g, "$1<em>$2</em>");
+          // Links [texto](url) apenas com http/https (o texto ja esta escapado,
+          // entao &quot; aparece no lugar das aspas originais).
+          s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, function (_m, rotulo, url) {
+            return '<a href="' + url + '" target="_blank" rel="noopener noreferrer">' + rotulo + "</a>";
+          });
+          return s;
+        }
+
+        function fecharLista() {
+          if (tipoLista) {
+            html += "</" + tipoLista + ">";
+            tipoLista = null;
+          }
+        }
+
+        function descarregarParagrafo() {
+          if (bufferParagrafo.length) {
+            html += "<p>" + bufferParagrafo.join("<br>") + "</p>";
+            bufferParagrafo = [];
+          }
+        }
+
+        linhas.forEach(function (linhaOrig) {
+          const linha = linhaOrig.trim();
+
+          // Linha em branco: fecha paragrafo e lista acumulados.
+          if (linha === "") {
+            descarregarParagrafo();
+            fecharLista();
+            return;
+          }
+
+          // Titulos (#, ##, ###...). Mapeamos para h3/h4 para caber no balao.
+          const tit = linha.match(/^(#{1,6})\s+(.*)$/);
+          if (tit) {
+            descarregarParagrafo();
+            fecharLista();
+            const nivel = tit[1].length <= 2 ? 3 : 4;
+            html += "<h" + nivel + ">" + inline(tit[2]) + "</h" + nivel + ">";
+            return;
+          }
+
+          // Item de lista nao ordenada: "- " ou "* ".
+          const itemUl = linha.match(/^[-*]\s+(.*)$/);
+          if (itemUl) {
+            descarregarParagrafo();
+            if (tipoLista !== "ul") {
+              fecharLista();
+              html += "<ul>";
+              tipoLista = "ul";
+            }
+            html += "<li>" + inline(itemUl[1]) + "</li>";
+            return;
+          }
+
+          // Item de lista ordenada: "1. ", "2) " etc.
+          const itemOl = linha.match(/^\d+[.)]\s+(.*)$/);
+          if (itemOl) {
+            descarregarParagrafo();
+            if (tipoLista !== "ol") {
+              fecharLista();
+              html += "<ol>";
+              tipoLista = "ol";
+            }
+            html += "<li>" + inline(itemOl[1]) + "</li>";
+            return;
+          }
+
+          // Linha comum: acumula no paragrafo corrente.
+          fecharLista();
+          bufferParagrafo.push(inline(linha));
+        });
+
+        // Fecha o que sobrou ao final.
+        descarregarParagrafo();
+        fecharLista();
+
+        return html;
+      }
+
+      /**
+       * Monta o elemento visual de uma mensagem (sem adicionar ao DOM).
+       */
+      function criarElementoMensagem(texto, classe) {
+        if (classe === "sophia") {
+          const linha = document.createElement("div");
+          linha.classList.add("linha-sophia");
+
+          const avatar = document.createElement("img");
+          avatar.classList.add("mini-avatar");
+          avatar.src = avatarSophiaUrl;
+          avatar.alt = "Sophia";
+
+          const balao = document.createElement("div");
+          balao.classList.add("mensagem", "sophia");
+          // As respostas da Sophia chegam em Markdown. Convertemos para HTML
+          // de forma SEGURA (escapando o texto antes de formatar), para exibir
+          // titulos, negrito, listas e links em vez de "#", "*" crus.
+          balao.innerHTML = renderMarkdown(texto);
+
+          linha.appendChild(avatar);
+          linha.appendChild(balao);
+          return linha;
+        }
+        const elemento = document.createElement("div");
+        elemento.classList.add("mensagem");
+        if (classe) {
+          elemento.classList.add(classe);
+        }
+        elemento.textContent = texto;
+        return elemento;
+      }
+
+      /**
+       * Exibe uma mensagem na tela E a guarda na conversa ativa (exceto avisos,
+       * que sao transitorios e nao fazem parte do historico).
+       */
+      function exibirMensagem(texto, classe, persistir) {
+        esconderOnboarding();
+        areaMensagens.appendChild(criarElementoMensagem(texto, classe));
+        areaMensagens.scrollTop = areaMensagens.scrollHeight;
+
+        if (persistir && (classe === "usuario" || classe === "sophia")) {
+          const conv = conversaAtiva();
+          if (conv) {
+            conv.mensagens.push({ classe: classe, texto: texto });
+            salvarConversas();
+          }
+        }
+      }
+
+      /**
+       * Redesenha a area de mensagens a partir da conversa ativa. Mostra o
+       * onboarding quando a conversa esta vazia.
+       */
+      function renderConversaAtiva() {
+        areaMensagens.textContent = "";
+        const conv = conversaAtiva();
+
+        if (!conv || conv.mensagens.length === 0) {
+          // Recria o onboarding (foi removido ao primeiro envio).
+          montarOnboarding();
+          return;
+        }
+
+        conv.mensagens.forEach(function (m) {
+          areaMensagens.appendChild(criarElementoMensagem(m.texto, m.classe));
+        });
+        areaMensagens.scrollTop = areaMensagens.scrollHeight;
+      }
+
+      /**
+       * Recria o bloco de boas-vindas (onboarding) com os cards de sugestao.
+       */
+      function montarOnboarding() {
+        const ob = document.createElement("div");
+        ob.className = "onboarding";
+        ob.id = "onboarding";
+        ob.innerHTML =
+          '<img class="avatar-grande" src="' + avatarSophiaUrl + '" alt="Avatar da Sophia" />' +
+          "<h2>Olá! Eu sou a Sophia. 🦉✨</h2>" +
+          "<p>Como posso te ajudar a conquistar sua próxima oportunidade hoje? " +
+          "Posso analisar seu LinkedIn, sugerir melhorias no perfil ou treinar para uma entrevista.</p>" +
+          '<div class="sugestoes" id="sugestoes-din">' +
+          chipHTML("🔍", "Analisar meu perfil do LinkedIn", "Quero analisar meu perfil do LinkedIn. Pode me orientar o que enviar?") +
+          chipHTML("📝", "Melhorar meu resumo profissional", "Quero melhorar meu resumo profissional (seção Sobre). Como faço?") +
+          chipHTML("💬", "Simular uma entrevista de emprego", "Quero simular uma entrevista de emprego. Pode me ajudar a treinar?") +
+          chipHTML("🚀", "Descobrir palavras-chave da minha área", "Quero descobrir palavras-chave relevantes para a minha área. Pode sugerir?") +
+          "</div>";
+        areaMensagens.appendChild(ob);
+
+        // Religa os cliques dos chips recriados.
+        ob.querySelector("#sugestoes-din").addEventListener("click", aoClicarChip);
+      }
+
+      function chipHTML(emoji, rotulo, sugestao) {
+        // Escapa aspas duplas da sugestao para o atributo HTML.
+        const seguro = sugestao.replace(/"/g, "&quot;");
+        return (
+          '<button class="chip" type="button" data-sugestao="' + seguro + '">' +
+          '<span class="emoji">' + emoji + "</span><span>" + rotulo + "</span></button>"
+        );
+      }
+
+      // =====================================================================
+      // HISTORICO DE CONVERSAS (lista na sidebar)
+      // =====================================================================
+      function gerarId() {
+        return "c_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7);
+      }
+
+      function renderListaConversas() {
+        listaConversas.textContent = "";
+
+        if (conversas.length === 0) {
+          const vazio = document.createElement("div");
+          vazio.className = "lista-vazia";
+          vazio.textContent = "Nenhuma conversa ainda.";
+          listaConversas.appendChild(vazio);
+          return;
+        }
+
+        conversas.forEach(function (conv) {
+          const item = document.createElement("div");
+          item.className = "conversa-item" + (conv.id === idAtivo ? " ativa" : "");
+          item.title = conv.titulo;
+
+          const icone = document.createElement("span");
+          icone.textContent = "💬";
+
+          const titulo = document.createElement("span");
+          titulo.className = "titulo";
+          titulo.textContent = conv.titulo;
+
+          const excluir = document.createElement("button");
+          excluir.className = "excluir";
+          excluir.type = "button";
+          excluir.title = "Excluir conversa";
+          excluir.textContent = "🗑";
+          excluir.addEventListener("click", function (ev) {
+            ev.stopPropagation(); // nao seleciona a conversa ao excluir
+            excluirConversa(conv.id);
+          });
+
+          item.appendChild(icone);
+          item.appendChild(titulo);
+          item.appendChild(excluir);
+          item.addEventListener("click", function () {
+            selecionarConversa(conv.id);
+          });
+
+          listaConversas.appendChild(item);
+        });
+      }
+
+      /**
+       * Cria uma conversa nova, vazia, e a torna ativa.
+       */
+      function novaConversa() {
+        const conv = {
+          id: gerarId(),
+          titulo: "Nova conversa",
+          mensagens: [],
+          criadaEm: Date.now(),
+        };
+        conversas.unshift(conv); // entra no topo da lista
+        idAtivo = conv.id;
+        salvarConversas();
+        renderListaConversas();
+        renderConversaAtiva();
+        // Zera a memoria do servidor, pois a conversa comeca do zero.
+        sincronizarServidor([]);
+        return conv;
+      }
+
+      /**
+       * Seleciona uma conversa existente: redesenha a tela e reenvia o contexto
+       * daquela conversa ao servidor para a Sophia continuar corretamente.
+       */
+      function selecionarConversa(id) {
+        if (id === idAtivo) {
+          return;
+        }
+        idAtivo = id;
+        salvarConversas();
+        renderListaConversas();
+        renderConversaAtiva();
+
+        const conv = conversaAtiva();
+        sincronizarServidor(conv ? paraHistoricoServidor(conv) : []);
+      }
+
+      /**
+       * Exclui uma conversa. Se era a ativa, cai para outra (ou cria uma nova).
+       */
+      function excluirConversa(id) {
+        conversas = conversas.filter(function (c) { return c.id !== id; });
+
+        if (idAtivo === id) {
+          if (conversas.length > 0) {
+            idAtivo = conversas[0].id;
+            const conv = conversaAtiva();
+            sincronizarServidor(paraHistoricoServidor(conv));
+          } else {
+            idAtivo = null;
+            sincronizarServidor([]);
+          }
+          renderConversaAtiva();
+        }
+
+        salvarConversas();
+        renderListaConversas();
+      }
+
+      /**
+       * Converte as mensagens visuais de uma conversa para o formato de turnos
+       * do servidor ({role, content}), ignorando avisos do sistema.
+       */
+      function paraHistoricoServidor(conv) {
+        if (!conv) {
+          return [];
+        }
+        return conv.mensagens
+          .filter(function (m) { return m.classe === "usuario" || m.classe === "sophia"; })
+          .map(function (m) {
+            return {
+              role: m.classe === "usuario" ? "user" : "assistant",
+              content: m.texto,
+            };
+          });
+      }
+
+      /**
+       * Reenvia o contexto da conversa ativa para o servidor (POST /sincronizar).
+       * Mantem a memoria do servidor alinhada com a conversa escolhida.
+       */
+      async function sincronizarServidor(turnos) {
+        try {
+          await fetch("/sincronizar", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ history: turnos }),
+          });
+        } catch (e) {
+          // Sem acao: se falhar, o proximo envio ainda cria contexto novo.
+        }
+      }
+
+      /**
+       * Define o titulo da conversa ativa a partir da primeira mensagem do
+       * Usuario (ate ~40 caracteres), se ainda estiver com o titulo padrao.
+       */
+      function talvezTitular(primeiraMensagem) {
+        const conv = conversaAtiva();
+        if (!conv || conv.titulo !== "Nova conversa") {
+          return;
+        }
+        const limpo = (primeiraMensagem || "").replace(/\s+/g, " ").trim();
+        if (limpo) {
+          conv.titulo = limpo.length > 40 ? limpo.slice(0, 40) + "…" : limpo;
+          salvarConversas();
+          renderListaConversas();
+        }
+      }
+
+      // =====================================================================
+      // INDICADOR "DIGITANDO"
+      // =====================================================================
+      function mostrarDigitando() {
+        esconderOnboarding();
+        elementoDigitando = document.createElement("div");
+        elementoDigitando.classList.add("digitando");
+
+        const texto = document.createElement("span");
+        texto.textContent = "Sophia está digitando";
+
+        const pontos = document.createElement("span");
+        pontos.classList.add("pontos");
+        pontos.innerHTML = "<span></span><span></span><span></span>";
+
+        elementoDigitando.appendChild(texto);
+        elementoDigitando.appendChild(pontos);
+        areaMensagens.appendChild(elementoDigitando);
+        areaMensagens.scrollTop = areaMensagens.scrollHeight;
+      }
+
+      function esconderDigitando() {
+        if (elementoDigitando) {
+          elementoDigitando.remove();
+          elementoDigitando = null;
+        }
+      }
+
+      // =====================================================================
+      // ENTRADA / ENVIO
+      // =====================================================================
+      function definirBloqueio(desabilitar) {
+        aguardandoResposta = desabilitar;
+        campoEntrada.disabled = desabilitar;
+        botaoEnviar.disabled = desabilitar;
+        botaoAnexar.disabled = desabilitar;
+      }
+
+      function atualizarFaixaPdf() {
+        const arquivo = campoPdf.files && campoPdf.files[0];
+        if (arquivo) {
+          nomePdf.textContent = "📄 PDF anexado: " + arquivo.name;
+          faixaPdf.style.display = "flex";
+        } else {
+          nomePdf.textContent = "";
+          faixaPdf.style.display = "none";
+        }
+      }
+
+      function removerPdf() {
+        campoPdf.value = "";
+        atualizarFaixaPdf();
+      }
+
+      function ajustarAltura() {
+        campoEntrada.style.height = "auto";
+        campoEntrada.style.height = Math.min(campoEntrada.scrollHeight, 140) + "px";
+      }
+
+      async function enviarMensagem() {
+        if (aguardandoResposta) {
+          return;
+        }
+
+        const mensagem = campoEntrada.value.trim();
+        const arquivo = campoPdf.files && campoPdf.files[0];
+
+        if (mensagem === "" && !arquivo) {
+          exibirMensagem("Digite uma mensagem ou anexe um PDF do currículo antes de enviar.", "aviso", false);
+          return;
+        }
+
+        // Garante que exista uma conversa ativa para guardar as mensagens.
+        if (!conversaAtiva()) {
+          novaConversa();
+        }
+
+        let textoUsuario = mensagem;
+        if (arquivo) {
+          const nota = "[PDF anexado: " + arquivo.name + "]";
+          textoUsuario = mensagem ? mensagem + "\n" + nota : nota;
+        }
+
+        definirBloqueio(true);
+        campoEntrada.value = "";
+        ajustarAltura();
+
+        exibirMensagem(textoUsuario, "usuario", true);
+        talvezTitular(textoUsuario);
+        mostrarDigitando();
+
+        try {
+          let resposta;
+          if (arquivo) {
+            const formulario = new FormData();
+            formulario.append("message", mensagem);
+            formulario.append("pdf", arquivo);
+            resposta = await fetch("/chat", { method: "POST", body: formulario });
+          } else {
+            resposta = await fetch("/chat", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ message: mensagem }),
+            });
+          }
+
+          esconderDigitando();
+
+          if (resposta.status === 400) {
+            let aviso = "Entrada inválida. Por favor, tente novamente.";
+            try {
+              const corpo = await resposta.json();
+              if (corpo && corpo.error) {
+                aviso = corpo.error;
+              }
+            } catch (e) {}
+            exibirMensagem(aviso, "aviso", false);
+            return;
+          }
+
+          if (!resposta.ok) {
+            exibirMensagem("Não consegui concluir a solicitação agora. Tente novamente em instantes.", "aviso", false);
+            return;
+          }
+
+          const dados = await resposta.json();
+          const reply = dados && dados.reply ? dados.reply : "";
+          exibirMensagem(reply, "sophia", true);
+          removerPdf();
+        } catch (erroRede) {
+          esconderDigitando();
+          exibirMensagem("Falha de conexão. Verifique sua internet e tente novamente.", "aviso", false);
+        } finally {
+          esconderDigitando();
+          definirBloqueio(false);
+          campoEntrada.focus();
+        }
+      }
+
+      /**
+       * Botao "nova analise/limpar": inicia uma conversa nova e descarta a
+       * memoria do servidor (POST /limpar). O historico de conversas e mantido.
+       */
+      async function limparConversa() {
+        try {
+          await fetch("/limpar", { method: "POST" });
+        } catch (e) {}
+        novaConversa();
+        campoEntrada.focus();
+      }
+
+      function aoClicarChip(evento) {
+        const chip = evento.target.closest(".chip");
+        if (!chip) {
+          return;
+        }
+        campoEntrada.value = chip.getAttribute("data-sugestao") || "";
+        ajustarAltura();
+        enviarMensagem();
+      }
+
+      // =====================================================================
+      // CONFIGURACOES (modal)
+      // =====================================================================
+      function abrirModal() {
+        // Reflete o estado atual nos controles antes de abrir.
+        toggleHistorico.checked = config.salvarHistorico;
+        toggleEnter.checked = config.enviarComEnter;
+        modalConfig.classList.add("aberto");
+      }
+
+      function fecharModal() {
+        modalConfig.classList.remove("aberto");
+      }
+
+      // =====================================================================
+      // EVENTOS
+      // =====================================================================
+      botaoEnviar.addEventListener("click", enviarMensagem);
+      botaoLimpar.addEventListener("click", limparConversa);
+      sidebarNova.addEventListener("click", function () {
+        novaConversa();
+        campoEntrada.focus();
+      });
+
+      botaoAnexar.addEventListener("click", function () { campoPdf.click(); });
+      campoPdf.addEventListener("change", atualizarFaixaPdf);
+      botaoRemoverPdf.addEventListener("click", removerPdf);
+
+      campoEntrada.addEventListener("input", ajustarAltura);
+      campoEntrada.addEventListener("keydown", function (evento) {
+        if (evento.key === "Enter" && !evento.shiftKey && config.enviarComEnter) {
+          evento.preventDefault();
+          enviarMensagem();
+        }
+      });
+
+      // Chips do onboarding inicial (renderizado no HTML).
+      if (sugestoes) {
+        sugestoes.addEventListener("click", aoClicarChip);
+      }
+
+      btnRecolher.addEventListener("click", function () {
+        sidebar.classList.toggle("recolhida");
+      });
+
+      // Tema.
+      botaoTema.addEventListener("click", alternarTema);
+      seletorTema.addEventListener("click", function (ev) {
+        const btn = ev.target.closest("button[data-tema]");
+        if (btn) {
+          aplicarTema(btn.getAttribute("data-tema"));
+        }
+      });
+
+      // Modal de configuracoes.
+      abrirConfig.addEventListener("click", abrirModal);
+      abrirConfigTop.addEventListener("click", abrirModal);
+      fecharConfig.addEventListener("click", fecharModal);
+      modalConfig.addEventListener("click", function (ev) {
+        if (ev.target === modalConfig) {
+          fecharModal();
+        }
+      });
+      document.addEventListener("keydown", function (ev) {
+        if (ev.key === "Escape") {
+          fecharModal();
+        }
+      });
+
+      toggleHistorico.addEventListener("change", function () {
+        config.salvarHistorico = toggleHistorico.checked;
+        salvarConfig();
+        if (config.salvarHistorico) {
+          salvarConversas(); // passa a persistir a partir de agora
+        } else {
+          // Respeita a escolha: remove o que ja estava salvo.
+          try {
+            localStorage.removeItem(LS_CONVERSAS);
+            localStorage.removeItem(LS_ATIVA);
+          } catch (e) {}
+        }
+      });
+
+      toggleEnter.addEventListener("change", function () {
+        config.enviarComEnter = toggleEnter.checked;
+        salvarConfig();
+      });
+
+      apagarTudo.addEventListener("click", async function () {
+        const ok = window.confirm("Apagar TODAS as conversas salvas neste navegador? Esta ação não pode ser desfeita.");
+        if (!ok) {
+          return;
+        }
+        conversas = [];
+        idAtivo = null;
+        try {
+          localStorage.removeItem(LS_CONVERSAS);
+          localStorage.removeItem(LS_ATIVA);
+          await fetch("/limpar", { method: "POST" });
+        } catch (e) {}
+        novaConversa();
+        fecharModal();
+      });
+
+      // =====================================================================
+      // INICIALIZACAO
+      // =====================================================================
+      function iniciar() {
+        // Configuracoes salvas.
+        config = Object.assign({ salvarHistorico: true, enviarComEnter: true }, lerJSON(LS_CFG, {}));
+
+        // Tema salvo (ou claro por padrao).
+        let temaSalvo = "claro";
+        try {
+          temaSalvo = localStorage.getItem(LS_TEMA) || "claro";
+        } catch (e) {}
+        aplicarTema(temaSalvo);
+
+        // Conversas salvas.
+        conversas = lerJSON(LS_CONVERSAS, []);
+        if (!Array.isArray(conversas)) {
+          conversas = [];
+        }
+
+        let ativaSalva = "";
+        try {
+          ativaSalva = localStorage.getItem(LS_ATIVA) || "";
+        } catch (e) {}
+
+        if (conversas.length > 0) {
+          // Retoma a conversa salva (a ativa, ou a primeira da lista).
+          idAtivo = conversas.some(function (c) { return c.id === ativaSalva; })
+            ? ativaSalva
+            : conversas[0].id;
+          renderListaConversas();
+          renderConversaAtiva();
+          // Alinha o servidor com a conversa retomada.
+          sincronizarServidor(paraHistoricoServidor(conversaAtiva()));
+        } else {
+          // Sem historico: cria a primeira conversa (fica vazia, com onboarding).
+          renderListaConversas();
+          novaConversa();
+        }
+
+        campoEntrada.focus();
+      }
+
+      iniciar();
+    </script>
+  </body>
+</html>
