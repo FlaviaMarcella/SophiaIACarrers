@@ -11,6 +11,36 @@ com tema claro/escuro e histórico de conversas.
 
 ---
 
+## 🎬 Demonstração
+
+### Tela inicial
+
+![Tela inicial da Sophia](docs/media/tela-inicial.png)
+
+### Vídeo da aplicação em execução
+
+https://github.com/user-attachments/assets/COLE_AQUI_O_LINK_DO_VIDEO
+
+<!--
+  Como adicionar as mídias:
+
+  1) PRINT da tela inicial
+     - Salve a imagem em: docs/media/tela-inicial.png
+     - O caminho acima já aponta para ela.
+
+  2) VÍDEO da aplicação
+     Opção A (recomendada — sem pesar o repositório):
+       - Abra o GitHub > issue/PR ou a área de edição do README e ARRASTE o
+         arquivo de vídeo (.mp4/.mov). O GitHub gera um link
+         https://github.com/user-attachments/... Cole esse link no lugar acima.
+     Opção B (vídeo versionado no repositório):
+       - Salve em docs/media/demo.mp4 e use um link clicável:
+         [▶ Assistir ao vídeo](docs/media/demo.mp4)
+       - Evite vídeos grandes no Git; prefira a Opção A.
+-->
+
+---
+
 ## ✨ Funcionalidades
 
 - **Análise de perfil do LinkedIn** a partir de texto colado ou de um **PDF**
